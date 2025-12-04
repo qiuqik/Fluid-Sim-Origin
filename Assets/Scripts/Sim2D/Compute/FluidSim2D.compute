@@ -5,6 +5,7 @@
 #pragma kernel CalculateDensities
 #pragma kernel CalculatePressureForce
 #pragma kernel CalculateViscosity
+#pragma kernel CalculateGranularForces
 #pragma kernel UpdatePositions
 
 // Includes
@@ -26,6 +27,10 @@ StructuredBuffer<uint> SortedIndices;
 
 // Settings
 const uint numParticles;
+const float particleScale;
+const float granularStiffness;
+const float granularDamping;
+const float granularFriction;
 const float gravity;
 const float deltaTime;
 const float collisionDamping;
@@ -98,6 +103,7 @@ float2 CalculateDensity(float2 pos)
 			if (sqrDstToNeighbour > sqrRadius) continue;
 
 			// Calculate density and near density
+			// 计算密度和近似密度
 			float dst = sqrt(sqrDstToNeighbour);
 			density += DensityKernel(dst, smoothingRadius);
 			nearDensity += NearDensityKernel(dst, smoothingRadius);
@@ -195,6 +201,7 @@ void ExternalForces(uint3 id : SV_DispatchThreadID)
 
 	// Predict
 	const float predictionFactor = 1 / 120.0;
+	// PredictedPositions[id.x] = Positions[id.x];
 	PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * predictionFactor;
 }
 
@@ -309,6 +316,85 @@ void CalculatePressureForce (uint3 id : SV_DispatchThreadID)
 }
 
 
+[numthreads(NumThreads,1,1)]
+void CalculateGranularForces (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+
+	float2 pos = PredictedPositions[id.x];
+	int2 originCell = GetCell2D(pos, smoothingRadius);
+	float sqrRadius = smoothingRadius * smoothingRadius;
+
+	float2 granularForce = 0;
+	float2 velocity = Velocities[id.x];
+
+	// Neighbour search (reuse same pattern)
+	for (int i = 0; i < 9; i++)
+	{
+		uint hash = HashCell2D(originCell + offsets2D[i]);
+		uint key = KeyFromHash(hash, numParticles);
+		uint currIndex = SpatialOffsets[key];
+
+		while (currIndex < numParticles)
+		{
+			uint neighbourIndex = currIndex;
+			currIndex ++;
+
+			// Skip self
+			if (neighbourIndex == id.x) continue;
+
+			uint neighbourKey = SpatialKeys[neighbourIndex];
+			if (neighbourKey != key) break;
+
+			float2 neighbourPos = PredictedPositions[neighbourIndex];
+			float2 offsetToNeighbour = neighbourPos - pos;
+			float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+
+			// Skip if not within search radius
+			if (sqrDstToNeighbour > sqrRadius) continue;
+
+			float dst = sqrt(sqrDstToNeighbour);
+
+			// Treat particleScale as particle diameter; compute overlap
+			float overlap = particleScale - dst;
+			if (overlap > 0)
+			{
+				float2 n = dst > 0 ? offsetToNeighbour / dst : float2(0, 1);
+
+				// Relative normal velocity (j relative to i)
+				float relNormalVel = dot(Velocities[neighbourIndex] - velocity, n);
+
+				// Normal spring-damper force magnitude (reaction on j is +, on i is -)
+				float Fn_mag = granularStiffness * overlap - granularDamping * relNormalVel;
+				Fn_mag = max(Fn_mag, 0);
+				float2 Fn = Fn_mag * n;
+
+				// Tangential (friction) force approximate via relative tangential velocity
+				float2 relVel = Velocities[neighbourIndex] - velocity;
+				float2 tang = relVel - relNormalVel * n;
+				float tangSpeed = length(tang);
+				float2 Ft = float2(0,0);
+				if (tangSpeed > 0)
+				{
+					float2 tangDir = tang / tangSpeed;
+					// Coulomb friction cap
+					float Ft_coulomb = granularFriction * Fn_mag;
+					// small tangential stiffness proportional to overlap to provide resistance
+					float Ft_visc = min(Ft_coulomb, granularStiffness * 0.1 * overlap);
+					Ft = -Ft_visc * tangDir;
+				}
+
+				// For particle i, force is negative of (Fn + Ft)
+				granularForce += -(Fn + Ft);
+			}
+		}
+	}
+
+	// Apply accumulated granular force as velocity change (assume unit mass per particle)
+	Velocities[id.x] += granularForce * deltaTime;
+}
+
+
 
 [numthreads(NumThreads,1,1)]
 void CalculateViscosity (uint3 id : SV_DispatchThreadID)
@@ -347,7 +433,27 @@ void CalculateViscosity (uint3 id : SV_DispatchThreadID)
 
 			// Skip if not within radius
 			if (sqrDstToNeighbour > sqrRadius) continue;
+			
+			// 粒子接触力：切向摩擦+法向弹簧阻尼
+			// float dst = sqrt(sqrDstToNeighbour);
+			// if(dst - particleScale < 0.01){
+			// 	float2 dirToNeighbour = dst > 0 ? offsetToNeighbour / dst : float2(0, 1);
+			// 	float2 relativeVelocity = Velocities[neighbourIndex] - velocity;
 
+			// 	// 切向摩擦
+			// 	float tangentVelocityMag = dot(relativeVelocity, float2(-dirToNeighbour.y, dirToNeighbour.x));
+			// 	float2 tangentVelocity = tangentVelocityMag * float2(-dirToNeighbour.y, dirToNeighbour.x);
+			// 	viscosityForce += -tangentVelocity * 0.5;
+
+			// 	// 法向弹簧阻尼
+			// 	float normalVelocityMag = dot(relativeVelocity, dirToNeighbour);
+			// 	if(normalVelocityMag < 0){
+			// 		float2 normalVelocity = normalVelocityMag * dirToNeighbour;
+			// 		viscosityForce += -normalVelocity * 0.5;
+			// 	}
+			// }
+
+			// 通过粒子间的速度差异计算粘度力，模拟流体粘性效应，更新粒子运动状态。
 			float dst = sqrt(sqrDstToNeighbour);
 			float2 neighbourVelocity = Velocities[neighbourIndex];
 			viscosityForce += (neighbourVelocity - velocity) * ViscosityKernel(dst, smoothingRadius);

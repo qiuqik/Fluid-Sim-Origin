@@ -25,6 +25,10 @@ namespace Seb.Fluid2D.Simulation
 		public Vector2 obstacleSize;
 		public Vector2 obstacleCentre;
 
+		public float granularStiffness = 2000f;
+		public float granularDamping = 30f;
+		public float granularFriction = 0.5f;
+
 		[Header("Interaction Settings")]
 		public float interactionRadius;
 
@@ -55,7 +59,8 @@ namespace Seb.Fluid2D.Simulation
 		const int densityKernel = 4;
 		const int pressureKernel = 5;
 		const int viscosityKernel = 6;
-		const int updatePositionKernel = 7;
+		const int granularForcesKernel = 7;
+		const int updatePositionKernel = 8;
 
 		// State
 		bool isPaused;
@@ -64,7 +69,8 @@ namespace Seb.Fluid2D.Simulation
 
 		public int numParticles { get; private set; }
 
-
+		ParticleDisplay2D display;
+		float particleScale;
 		void Start()
 		{
 			Debug.Log("Controls: Space = Play/Pause, R = Reset, LMB = Attract, RMB = Repel");
@@ -96,13 +102,13 @@ namespace Seb.Fluid2D.Simulation
 
 			// Init compute
 			ComputeHelper.SetBuffer(compute, positionBuffer, "Positions", externalForcesKernel, updatePositionKernel, reorderKernel, copybackKernel);
-			ComputeHelper.SetBuffer(compute, predictedPositionBuffer, "PredictedPositions", externalForcesKernel, spatialHashKernel, densityKernel, pressureKernel, viscosityKernel, reorderKernel, copybackKernel);
-			ComputeHelper.SetBuffer(compute, velocityBuffer, "Velocities", externalForcesKernel, pressureKernel, viscosityKernel, updatePositionKernel, reorderKernel, copybackKernel);
+			ComputeHelper.SetBuffer(compute, predictedPositionBuffer, "PredictedPositions", externalForcesKernel, spatialHashKernel, densityKernel, pressureKernel, granularForcesKernel, viscosityKernel, reorderKernel, copybackKernel);
+			ComputeHelper.SetBuffer(compute, velocityBuffer, "Velocities", externalForcesKernel, pressureKernel, granularForcesKernel, viscosityKernel, updatePositionKernel, reorderKernel, copybackKernel);
 			ComputeHelper.SetBuffer(compute, densityBuffer, "Densities", densityKernel, pressureKernel, viscosityKernel);
 
 			ComputeHelper.SetBuffer(compute, spatialHash.SpatialIndices, "SortedIndices", spatialHashKernel, reorderKernel);
-			ComputeHelper.SetBuffer(compute, spatialHash.SpatialOffsets, "SpatialOffsets", spatialHashKernel, densityKernel, pressureKernel, viscosityKernel);
-			ComputeHelper.SetBuffer(compute, spatialHash.SpatialKeys, "SpatialKeys", spatialHashKernel, densityKernel, pressureKernel, viscosityKernel);
+			ComputeHelper.SetBuffer(compute, spatialHash.SpatialOffsets, "SpatialOffsets", spatialHashKernel, densityKernel, pressureKernel, granularForcesKernel, viscosityKernel);
+			ComputeHelper.SetBuffer(compute, spatialHash.SpatialKeys, "SpatialKeys", spatialHashKernel, densityKernel, pressureKernel, granularForcesKernel, viscosityKernel);
 
 			ComputeHelper.SetBuffer(compute, sortTarget_Position, "SortTarget_Positions", reorderKernel, copybackKernel);
 			ComputeHelper.SetBuffer(compute, sortTarget_PredicitedPosition, "SortTarget_PredictedPositions", reorderKernel, copybackKernel);
@@ -149,9 +155,10 @@ namespace Seb.Fluid2D.Simulation
 
 			RunSpatial();
 
-			ComputeHelper.Dispatch(compute, numParticles, kernelIndex: densityKernel);
-			ComputeHelper.Dispatch(compute, numParticles, kernelIndex: pressureKernel);
-			ComputeHelper.Dispatch(compute, numParticles, kernelIndex: viscosityKernel);
+			// ComputeHelper.Dispatch(compute, numParticles, kernelIndex: densityKernel);
+			// ComputeHelper.Dispatch(compute, numParticles, kernelIndex: pressureKernel);
+			// ComputeHelper.Dispatch(compute, numParticles, kernelIndex: viscosityKernel);
+			ComputeHelper.Dispatch(compute, numParticles, kernelIndex: granularForcesKernel);
 			ComputeHelper.Dispatch(compute, numParticles, kernelIndex: updatePositionKernel);
 		}
 
@@ -166,6 +173,12 @@ namespace Seb.Fluid2D.Simulation
 
 		void UpdateSettings(float deltaTime)
 		{
+			
+			// Try to obtain the display component at runtime and initialize scale safely
+			display = GetComponent<ParticleDisplay2D>();
+			particleScale = display != null ? display.scale : 0.05f;
+
+			compute.SetFloat("particleScale", particleScale);
 			compute.SetFloat("deltaTime", deltaTime);
 			compute.SetFloat("gravity", gravity);
 			compute.SetFloat("collisionDamping", collisionDamping);
@@ -177,6 +190,9 @@ namespace Seb.Fluid2D.Simulation
 			compute.SetVector("boundsSize", boundsSize);
 			compute.SetVector("obstacleSize", obstacleSize);
 			compute.SetVector("obstacleCentre", obstacleCentre);
+			compute.SetFloat("granularStiffness", granularStiffness);
+			compute.SetFloat("granularDamping", granularDamping);
+			compute.SetFloat("granularFriction", granularFriction);
 
 			compute.SetFloat("Poly6ScalingFactor", 4 / (Mathf.PI * Mathf.Pow(smoothingRadius, 8)));
 			compute.SetFloat("SpikyPow3ScalingFactor", 10 / (Mathf.PI * Mathf.Pow(smoothingRadius, 5)));
