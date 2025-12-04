@@ -116,7 +116,7 @@ float NearPressureFromDensity(float nearDensity)
 {
 	return nearPressureMultiplier * nearDensity;
 }
-
+// 给定位置和速度，计算外部力（重力和输入交互）
 float2 ExternalForces(float2 pos, float2 velocity)
 {
 	// Gravity
@@ -143,7 +143,7 @@ float2 ExternalForces(float2 pos, float2 velocity)
 	return gravityAccel;
 }
 
-
+// 处理与边界盒和中间障碍物的碰撞
 void HandleCollisions(uint particleIndex)
 {
 	float2 pos = Positions[particleIndex];
