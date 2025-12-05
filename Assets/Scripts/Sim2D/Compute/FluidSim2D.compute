@@ -5,6 +5,7 @@
 #pragma kernel CalculateDensities
 #pragma kernel CalculatePressureForce
 #pragma kernel CalculateViscosity
+#pragma kernel VelocityCopyback
 #pragma kernel CalculateGranularForces
 #pragma kernel UpdatePositions
 
@@ -18,6 +19,7 @@ static const int NumThreads = 64;
 RWStructuredBuffer<float2> Positions;
 RWStructuredBuffer<float2> PredictedPositions;
 RWStructuredBuffer<float2> Velocities;
+RWStructuredBuffer<float2> tempVelocities;  // 用于存储上一帧速度，确保 CalculateGranularForces 计算的一致性
 RWStructuredBuffer<float2> Densities; // Density, Near Density
 
 // Spatial hashing
@@ -315,6 +317,12 @@ void CalculatePressureForce (uint3 id : SV_DispatchThreadID)
 	Velocities[id.x] += acceleration * deltaTime;//
 }
 
+[numthreads(NumThreads,1,1)]
+void VelocityCopyback (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	tempVelocities[id.x] = Velocities[id.x];
+}
 
 [numthreads(NumThreads,1,1)]
 void CalculateGranularForces (uint3 id : SV_DispatchThreadID)
@@ -326,7 +334,7 @@ void CalculateGranularForces (uint3 id : SV_DispatchThreadID)
 	float sqrRadius = smoothingRadius * smoothingRadius;
 
 	float2 granularForce = 0;
-	float2 velocity = Velocities[id.x];
+	float2 velocity = tempVelocities[id.x];
 
 	// Neighbour search (reuse same pattern)
 	for (int i = 0; i < 9; i++)
@@ -362,7 +370,7 @@ void CalculateGranularForces (uint3 id : SV_DispatchThreadID)
 				float2 n = dst > 0 ? offsetToNeighbour / dst : float2(0, 1);
 
 				// Relative normal velocity (j relative to i)
-				float relNormalVel = dot(Velocities[neighbourIndex] - velocity, n);
+				float relNormalVel = dot(tempVelocities[neighbourIndex] - velocity, n);
 
 				// Normal spring-damper force magnitude (reaction on j is +, on i is -)
 				float Fn_mag = granularStiffness * overlap - granularDamping * relNormalVel;
@@ -370,7 +378,7 @@ void CalculateGranularForces (uint3 id : SV_DispatchThreadID)
 				float2 Fn = Fn_mag * n;
 
 				// Tangential (friction) force approximate via relative tangential velocity
-				float2 relVel = Velocities[neighbourIndex] - velocity;
+				float2 relVel = tempVelocities[neighbourIndex] - velocity;
 				float2 tang = relVel - relNormalVel * n;
 				float tangSpeed = length(tang);
 				float2 Ft = float2(0,0);

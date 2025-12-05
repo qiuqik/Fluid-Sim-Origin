@@ -181,6 +181,9 @@ MonoBehaviour:
   boundsSize: {x: 43.1, y: 23.86}
   obstacleSize: {x: 20.4, y: 1.69}
   obstacleCentre: {x: 7.5, y: -8.16}
+  granularStiffness: 2000
+  granularDamping: 30
+  granularFriction: 0.5
   interactionRadius: 2.5
   interactionStrength: 75
   compute: {fileID: 7200000, guid: 1c77ce8de78fddb419ed2d15cae41af0, type: 3}
@@ -202,10 +205,10 @@ MonoBehaviour:
   jitterStr: 0.03
   spawnRegions:
   - position: {x: 0, y: 2.95}
-    size: {x: 34, y: 15}
+    size: {x: 20, y: 10}
     debugCol: {r: 1, g: 0.2783019, b: 0.2783019, a: 1}
   showSpawnBoundsGizmos: 1
-  spawnParticleCount: 255696
+  spawnParticleCount: 100352
 --- !u!114 &271053322
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -224,17 +227,17 @@ MonoBehaviour:
   scale: 0.07
   colourMap:
     serializedVersion: 2
-    key0: {r: 0.11534355, g: 0.2537607, b: 0.9056604, a: 1}
-    key1: {r: 0.6273585, g: 0.8659867, b: 1, a: 1}
-    key2: {r: 1, g: 1, b: 1, a: 0}
+    key0: {r: 0.49685526, g: 0.35287118, b: 0.15468131, a: 1}
+    key1: {r: 0.9748427, g: 0.73162633, b: 0.23604673, a: 1}
+    key2: {r: 0, g: 0, b: 0, a: 0}
     key3: {r: 0, g: 0, b: 0, a: 0}
     key4: {r: 0, g: 0, b: 0, a: 0}
     key5: {r: 0, g: 0, b: 0, a: 0}
     key6: {r: 0, g: 0, b: 0, a: 0}
     key7: {r: 0, g: 0, b: 0, a: 0}
     ctime0: 0
-    ctime1: 59607
-    ctime2: 65535
+    ctime1: 65535
+    ctime2: 0
     ctime3: 0
     ctime4: 0
     ctime5: 0
@@ -250,7 +253,7 @@ MonoBehaviour:
     atime7: 0
     m_Mode: 2
     m_ColorSpace: -1
-    m_NumColorKeys: 3
+    m_NumColorKeys: 2
     m_NumAlphaKeys: 2
   gradientResolution: 64
   velocityDisplayMax: 15

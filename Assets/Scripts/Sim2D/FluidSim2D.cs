@@ -42,6 +42,7 @@ namespace Seb.Fluid2D.Simulation
 		// Buffers
 		public ComputeBuffer positionBuffer { get; private set; }
 		public ComputeBuffer velocityBuffer { get; private set; }
+		public ComputeBuffer tempvelocityBuffer { get; private set; }
 		public ComputeBuffer densityBuffer { get; private set; }
 
 		ComputeBuffer sortTarget_Position;
@@ -59,8 +60,9 @@ namespace Seb.Fluid2D.Simulation
 		const int densityKernel = 4;
 		const int pressureKernel = 5;
 		const int viscosityKernel = 6;
-		const int granularForcesKernel = 7;
-		const int updatePositionKernel = 8;
+		const int velocityCopybackKernel = 7;
+		const int granularForcesKernel = 8;
+		const int updatePositionKernel = 9;
 
 		// State
 		bool isPaused;
@@ -91,6 +93,7 @@ namespace Seb.Fluid2D.Simulation
 			positionBuffer = ComputeHelper.CreateStructuredBuffer<float2>(numParticles);
 			predictedPositionBuffer = ComputeHelper.CreateStructuredBuffer<float2>(numParticles);
 			velocityBuffer = ComputeHelper.CreateStructuredBuffer<float2>(numParticles);
+			tempvelocityBuffer = ComputeHelper.CreateStructuredBuffer<float2>(numParticles);
 			densityBuffer = ComputeHelper.CreateStructuredBuffer<float2>(numParticles);
 
 			sortTarget_Position = ComputeHelper.CreateStructuredBuffer<float2>(numParticles);
@@ -103,7 +106,8 @@ namespace Seb.Fluid2D.Simulation
 			// Init compute
 			ComputeHelper.SetBuffer(compute, positionBuffer, "Positions", externalForcesKernel, updatePositionKernel, reorderKernel, copybackKernel);
 			ComputeHelper.SetBuffer(compute, predictedPositionBuffer, "PredictedPositions", externalForcesKernel, spatialHashKernel, densityKernel, pressureKernel, granularForcesKernel, viscosityKernel, reorderKernel, copybackKernel);
-			ComputeHelper.SetBuffer(compute, velocityBuffer, "Velocities", externalForcesKernel, pressureKernel, granularForcesKernel, viscosityKernel, updatePositionKernel, reorderKernel, copybackKernel);
+			ComputeHelper.SetBuffer(compute, velocityBuffer, "Velocities", externalForcesKernel, pressureKernel, granularForcesKernel,velocityCopybackKernel, viscosityKernel, updatePositionKernel, reorderKernel, copybackKernel);
+			ComputeHelper.SetBuffer(compute, tempvelocityBuffer, "tempVelocities", granularForcesKernel, velocityCopybackKernel);
 			ComputeHelper.SetBuffer(compute, densityBuffer, "Densities", densityKernel, pressureKernel, viscosityKernel);
 
 			ComputeHelper.SetBuffer(compute, spatialHash.SpatialIndices, "SortedIndices", spatialHashKernel, reorderKernel);
@@ -158,6 +162,7 @@ namespace Seb.Fluid2D.Simulation
 			// ComputeHelper.Dispatch(compute, numParticles, kernelIndex: densityKernel);
 			// ComputeHelper.Dispatch(compute, numParticles, kernelIndex: pressureKernel);
 			// ComputeHelper.Dispatch(compute, numParticles, kernelIndex: viscosityKernel);
+			ComputeHelper.Dispatch(compute, numParticles, kernelIndex: velocityCopybackKernel);
 			ComputeHelper.Dispatch(compute, numParticles, kernelIndex: granularForcesKernel);
 			ComputeHelper.Dispatch(compute, numParticles, kernelIndex: updatePositionKernel);
 		}
@@ -223,6 +228,7 @@ namespace Seb.Fluid2D.Simulation
 			positionBuffer.SetData(allPoints);
 			predictedPositionBuffer.SetData(allPoints);
 			velocityBuffer.SetData(spawnData.velocities);
+			tempvelocityBuffer.SetData(spawnData.velocities);
 		}
 
 		void HandleInput()
@@ -251,7 +257,7 @@ namespace Seb.Fluid2D.Simulation
 
 		void OnDestroy()
 		{
-			ComputeHelper.Release(positionBuffer, predictedPositionBuffer, velocityBuffer, densityBuffer, sortTarget_Position, sortTarget_Velocity, sortTarget_PredicitedPosition);
+			ComputeHelper.Release(positionBuffer, predictedPositionBuffer, velocityBuffer, tempvelocityBuffer, densityBuffer, sortTarget_Position, sortTarget_Velocity, sortTarget_PredicitedPosition);
 			spatialHash.Release();
 		}
 
