@@ -36,6 +36,7 @@ const float granularFriction;
 const float gravity;
 const float deltaTime;
 const float collisionDamping;
+const float wallFriction;
 const float smoothingRadius;
 const float targetDensity;
 const float pressureMultiplier;
@@ -152,39 +153,110 @@ float2 ExternalForces(float2 pos, float2 velocity)
 }
 
 // 处理与边界盒和中间障碍物的碰撞
+// void HandleCollisions(uint particleIndex)
+// {
+// 	float2 pos = Positions[particleIndex];
+// 	float2 vel = Velocities[particleIndex];
+
+// 	// Keep particle inside bounds
+// 	const float2 halfSize = boundsSize * 0.5;
+// 	float2 edgeDst = halfSize - abs(pos);
+
+// 	if (edgeDst.x <= 0)
+// 	{
+// 		pos.x = halfSize.x * sign(pos.x);
+// 		vel.x *= -1 * collisionDamping;
+// 	}
+// 	if (edgeDst.y <= 0)
+// 	{
+// 		pos.y = halfSize.y * sign(pos.y);
+// 		vel.y *= -1 * collisionDamping;
+// 	}
+
+// 	// Collide particle against the test obstacle
+// 	const float2 obstacleHalfSize = obstacleSize * 0.5;
+// 	float2 obstacleEdgeDst = obstacleHalfSize - abs(pos - obstacleCentre);
+
+// 	if (obstacleEdgeDst.x >= 0 && obstacleEdgeDst.y >= 0)
+// 	{
+// 		if (obstacleEdgeDst.x < obstacleEdgeDst.y) {
+// 			pos.x = obstacleHalfSize.x * sign(pos.x - obstacleCentre.x) + obstacleCentre.x;
+// 			vel.x *= -1 * collisionDamping;
+// 		}
+// 		else {
+// 			pos.y = obstacleHalfSize.y * sign(pos.y - obstacleCentre.y) + obstacleCentre.y;
+// 			vel.y *= -1 * collisionDamping;
+// 		}
+// 	}
+
+// 	// Update position and velocity
+// 	Positions[particleIndex] = pos;
+// 	Velocities[particleIndex] = vel;
+// }
+
+
+// collisionDamping (即 wallBounciness): 0.1 (沙子几乎不反弹)
+// wallFriction: 0.9 ~ 1.0 (地面很粗糙，能抓住沙子)
 void HandleCollisions(uint particleIndex)
 {
 	float2 pos = Positions[particleIndex];
 	float2 vel = Velocities[particleIndex];
 
-	// Keep particle inside bounds
+	// ------------------------------------------------
+	// 1. 场景边界 (Bounds) 处理
+	// ------------------------------------------------
 	const float2 halfSize = boundsSize * 0.5;
 	float2 edgeDst = halfSize - abs(pos);
 
+	// --- X轴墙壁碰撞 (左右墙) ---
 	if (edgeDst.x <= 0)
 	{
 		pos.x = halfSize.x * sign(pos.x);
-		vel.x *= -1 * collisionDamping;
+		
+		// 法向 (X): 反弹 + 能量损失
+		vel.x *= -1 * collisionDamping; 
+		
+		// 切向 (Y): 施加摩擦力！这是沙子堆积的关键
+		// 如果 wallFriction 是 1.0，沙子碰到墙就会挂住不掉下来（完全粗糙）
+		// 如果 wallFriction 是 0.0，就是冰面
+		vel.y *= (1.0 - wallFriction); 
 	}
+
+	// --- Y轴墙壁碰撞 (上下墙/地面) ---
 	if (edgeDst.y <= 0)
 	{
 		pos.y = halfSize.y * sign(pos.y);
+		
+		// 法向 (Y): 反弹
 		vel.y *= -1 * collisionDamping;
+		
+		// 切向 (X): 施加摩擦力！
+		// 这里最重要：地面摩擦力足够大，底层沙子才能停住，形成地基
+		vel.x *= (1.0 - wallFriction); 
 	}
 
-	// Collide particle against the test obstacle
+	// ------------------------------------------------
+	// 2. 障碍物 (Obstacle) 处理
+	// ------------------------------------------------
 	const float2 obstacleHalfSize = obstacleSize * 0.5;
 	float2 obstacleEdgeDst = obstacleHalfSize - abs(pos - obstacleCentre);
 
 	if (obstacleEdgeDst.x >= 0 && obstacleEdgeDst.y >= 0)
 	{
+		// 判断是从哪个面撞进去的（取穿透深度最小的轴）
 		if (obstacleEdgeDst.x < obstacleEdgeDst.y) {
+			// 撞到了障碍物的左右面 (X面)
 			pos.x = obstacleHalfSize.x * sign(pos.x - obstacleCentre.x) + obstacleCentre.x;
-			vel.x *= -1 * collisionDamping;
+			
+			vel.x *= -1 * collisionDamping; // 反弹 X
+			vel.y *= (1.0 - wallFriction);  // 摩擦 Y
 		}
 		else {
+			// 撞到了障碍物的上下面 (Y面)
 			pos.y = obstacleHalfSize.y * sign(pos.y - obstacleCentre.y) + obstacleCentre.y;
-			vel.y *= -1 * collisionDamping;
+			
+			vel.y *= -1 * collisionDamping; // 反弹 Y
+			vel.x *= (1.0 - wallFriction);  // 摩擦 X
 		}
 	}
 
@@ -192,6 +264,7 @@ void HandleCollisions(uint particleIndex)
 	Positions[particleIndex] = pos;
 	Velocities[particleIndex] = vel;
 }
+
 
 [numthreads(NumThreads,1,1)]
 void ExternalForces(uint3 id : SV_DispatchThreadID)
@@ -329,14 +402,22 @@ void CalculateGranularForces (uint3 id : SV_DispatchThreadID)
 {
 	if (id.x >= numParticles) return;
 
+	// 获取当前粒子的属性
 	float2 pos = PredictedPositions[id.x];
+	float2 vel = tempVelocities[id.x];
+	
 	int2 originCell = GetCell2D(pos, smoothingRadius);
-	float sqrRadius = smoothingRadius * smoothingRadius;
+	
+	// 优化：沙子只在接触时受力，所以判定半径取 particleScale (直径)
+	// 如果 particleScale 比 smoothingRadius 小很多，用这个平方距离做剔除效率更高
+	float contactRadius = particleScale; 
+	float sqrContactRadius = contactRadius * contactRadius;
 
-	float2 granularForce = 0;
-	float2 velocity = tempVelocities[id.x];
+	float2 forceAccumulator = float2(0, 0);
 
-	// Neighbour search (reuse same pattern)
+	// ---------------------------------------------------------
+	// 邻域搜索
+	// ---------------------------------------------------------
 	for (int i = 0; i < 9; i++)
 	{
 		uint hash = HashCell2D(originCell + offsets2D[i]);
@@ -346,62 +427,87 @@ void CalculateGranularForces (uint3 id : SV_DispatchThreadID)
 		while (currIndex < numParticles)
 		{
 			uint neighbourIndex = currIndex;
-			currIndex ++;
+			currIndex++;
 
-			// Skip self
 			if (neighbourIndex == id.x) continue;
 
 			uint neighbourKey = SpatialKeys[neighbourIndex];
 			if (neighbourKey != key) break;
 
 			float2 neighbourPos = PredictedPositions[neighbourIndex];
-			float2 offsetToNeighbour = neighbourPos - pos;
-			float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+			float2 offset = pos - neighbourPos; // 向量：从邻居指向自己 (Me - Neighbor)
+			float sqrDst = dot(offset, offset);
 
-			// Skip if not within search radius
-			if (sqrDstToNeighbour > sqrRadius) continue;
+			// 1. 快速剔除：如果距离超过了接触半径（直径），沙子之间没有力
+			if (sqrDst >= sqrContactRadius || sqrDst == 0) continue;
 
-			float dst = sqrt(sqrDstToNeighbour);
+			float dst = sqrt(sqrDst);
+			float2 normal = offset / dst; // 法线方向：推开自己的方向
 
-			// Treat particleScale as particle diameter; compute overlap
-			float overlap = particleScale - dst;
+			// ---------------------------------------------------------
+			// 核心改造：DEM 颗粒物理计算
+			// ---------------------------------------------------------
+			
+			// 计算重叠量 (Penetration)
+			float overlap = contactRadius - dst;
+
 			if (overlap > 0)
 			{
-				float2 n = dst > 0 ? offsetToNeighbour / dst : float2(0, 1);
+				float2 neighbourVel = tempVelocities[neighbourIndex];
+				
+				// 相对速度
+				float2 relVel = vel - neighbourVel;
+				if(length(relVel) < 1e-5) relVel = float2(0, 0); // 避免数值误差导致的震动
 
-				// Relative normal velocity (j relative to i)
-				float relNormalVel = dot(tempVelocities[neighbourIndex] - velocity, n);
+				// --- A. 法向力 (Normal Force) - 弹簧阻尼 ---
+				// 它是沿着法线方向的分量
+				float relVelNormal = dot(relVel, normal);
+				
+				// 弹簧力 (推开) - 阻尼力 (吸收能量，防止像弹力球一样乱跳)
+				// granularStiffness 建议设大，granularDamping 建议设大
+				// float springForce = granularStiffness * overlap;
+				float springForce = granularStiffness * pow(overlap, 1.5);
+				float dampingForce = -granularDamping * relVelNormal;
+				
+				// 法向力总和 (必须非负，不能互相吸引)
+				float Fn_mag = max(0.0f, springForce + dampingForce);
+				float2 Fn = Fn_mag * normal;
 
-				// Normal spring-damper force magnitude (reaction on j is +, on i is -)
-				float Fn_mag = granularStiffness * overlap - granularDamping * relNormalVel;
-				Fn_mag = max(Fn_mag, 0);
-				float2 Fn = Fn_mag * n;
+				// --- B. 切向力 (Friction Force) - 库仑摩擦 ---
+				// 去除法向速度分量，剩下的就是切向滑动速度
+				float2 tanVel = relVel - relVelNormal * normal;
+				float tanSpeed = length(tanVel);
 
-				// Tangential (friction) force approximate via relative tangential velocity
-				float2 relVel = tempVelocities[neighbourIndex] - velocity;
-				float2 tang = relVel - relNormalVel * n;
-				float tangSpeed = length(tang);
-				float2 Ft = float2(0,0);
-				if (tangSpeed > 0)
+				float2 Ft = float2(0, 0);
+				
+				// 只有在滑动时才计算摩擦
+				if (tanSpeed > 1e-5) // 避免除以0
 				{
-					float2 tangDir = tang / tangSpeed;
-					// Coulomb friction cap
-					float Ft_coulomb = granularFriction * Fn_mag;
-					// small tangential stiffness proportional to overlap to provide resistance
-					float Ft_visc = min(Ft_coulomb, granularStiffness * 0.1 * overlap);
-					Ft = -Ft_visc * tangDir;
+					float2 tanDir = tanVel / tanSpeed;
+
+					// 1. 计算想要完全停止滑动所需的力 (粘滞力)
+					// 这里系数可以用 mass/dt 来估算，或者直接用一个很高的摩擦刚度
+					float frictionForceNeededToStop = tanSpeed * granularStiffness * 0.5; // 0.5是经验系数
+
+					// 2. 库仑定律上限：摩擦力不能超过 (摩擦系数 * 正压力)
+					float maxFriction = granularFriction * Fn_mag;
+
+					// 3. 取两者较小值 (如果挤压力不够大，就止不住滑，表现为流动)
+					float actualFrictionMag = min(frictionForceNeededToStop, maxFriction);
+
+					// 摩擦力方向与滑动方向相反
+					Ft = -actualFrictionMag * tanDir;
 				}
 
-				// For particle i, force is negative of (Fn + Ft)
-				granularForce += -(Fn + Ft);
+				// 累加力 (因为 offset 是 Me - Neighbor，且 force 是推开 Me，所以直接加)
+				forceAccumulator += Fn + Ft;
 			}
 		}
 	}
 
-	// Apply accumulated granular force as velocity change (assume unit mass per particle)
-	Velocities[id.x] += granularForce * deltaTime;
+	// 应用力到速度 (假设质量为 1)
+	Velocities[id.x] += forceAccumulator * deltaTime;
 }
-
 
 
 [numthreads(NumThreads,1,1)]
@@ -476,6 +582,6 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
 {
 	if (id.x >= numParticles) return;
 
-	Positions[id.x] += Velocities[id.x] * deltaTime;
 	HandleCollisions(id.x);
+	Positions[id.x] += Velocities[id.x] * deltaTime;
 }

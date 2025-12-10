@@ -172,7 +172,8 @@ MonoBehaviour:
   maxTimestepFPS: 60
   iterationsPerFrame: 3
   gravity: -13
-  collisionDamping: 0.5
+  collisionDamping: 0.533
+  wallFriction: 0.514
   smoothingRadius: 0.175
   targetDensity: 234
   pressureMultiplier: 225
@@ -182,7 +183,7 @@ MonoBehaviour:
   obstacleSize: {x: 20.4, y: 1.69}
   obstacleCentre: {x: 7.5, y: -8.16}
   granularStiffness: 2000
-  granularDamping: 30
+  granularDamping: 2
   granularFriction: 0.5
   interactionRadius: 2.5
   interactionStrength: 75

@@ -172,7 +172,8 @@ MonoBehaviour:
   maxTimestepFPS: 60
   iterationsPerFrame: 3
   gravity: -13
-  collisionDamping: 0.773
+  collisionDamping: 0
+  wallFriction: 0.5
   smoothingRadius: 0.2
   targetDensity: 234
   pressureMultiplier: 225
@@ -181,9 +182,9 @@ MonoBehaviour:
   boundsSize: {x: 18.8, y: 9.3}
   obstacleSize: {x: 2.84, y: 1.13}
   obstacleCentre: {x: -3.36, y: -4.18}
-  granularStiffness: 2000
-  granularDamping: 50
-  granularFriction: 8
+  granularStiffness: 1000
+  granularDamping: 2
+  granularFriction: 0.9
   interactionRadius: 2.5
   interactionStrength: 25
   compute: {fileID: 7200000, guid: 1c77ce8de78fddb419ed2d15cae41af0, type: 3}
@@ -200,18 +201,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 895837b52d5fc53409ded3589d4da696, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  spawnDensity: 500
+  spawnDensity: 700
   initialVelocity: {x: 0, y: 0}
   jitterStr: 0.03
   spawnRegions:
   - position: {x: -5.25, y: 1.17}
-    size: {x: 4.58, y: 5.56}
+    size: {x: 5.56, y: 5.86}
     debugCol: {r: 1, g: 0.2783019, b: 0.2783019, a: 1}
   - position: {x: 5.53, y: 1.35}
-    size: {x: 4.71, y: 5.4}
+    size: {x: 7.27, y: 5.4}
     debugCol: {r: 0.27843142, g: 0.8376986, b: 1, a: 1}
   showSpawnBoundsGizmos: 1
-  spawnParticleCount: 25701
+  spawnParticleCount: 50687
 --- !u!114 &271053322
 MonoBehaviour:
   m_ObjectHideFlags: 0

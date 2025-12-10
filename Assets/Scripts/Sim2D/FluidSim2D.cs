@@ -16,6 +16,7 @@ namespace Seb.Fluid2D.Simulation
 		public int iterationsPerFrame;
 		public float gravity;
 		[Range(0, 1)] public float collisionDamping = 0.95f;
+		[Range(0, 1)] public float wallFriction = 0.9f;
 		public float smoothingRadius = 2;
 		public float targetDensity;
 		public float pressureMultiplier;
@@ -183,10 +184,11 @@ namespace Seb.Fluid2D.Simulation
 			display = GetComponent<ParticleDisplay2D>();
 			particleScale = display != null ? display.scale : 0.05f;
 
-			compute.SetFloat("particleScale", particleScale);
+			compute.SetFloat("particleScale", particleScale*2.0f);
 			compute.SetFloat("deltaTime", deltaTime);
 			compute.SetFloat("gravity", gravity);
 			compute.SetFloat("collisionDamping", collisionDamping);
+			compute.SetFloat("wallFriction", wallFriction);
 			compute.SetFloat("smoothingRadius", smoothingRadius);
 			compute.SetFloat("targetDensity", targetDensity);
 			compute.SetFloat("pressureMultiplier", pressureMultiplier);
