@@ -5,6 +5,7 @@ using Unity.Mathematics;
 using System.Collections.Generic;
 using Seb.Helpers;
 using static Seb.Helpers.ComputeHelper;
+using Seb.Fluid.Rendering;
 
 namespace Seb.Fluid.Simulation
 {
@@ -23,7 +24,14 @@ namespace Seb.Fluid.Simulation
 		public float pressureMultiplier = 288;
 		public float nearPressureMultiplier = 2.15f;
 		public float viscosityStrength = 0;
+
+
+		[Header("Granular Settings")]
 		[Range(0, 1)] public float collisionDamping = 0.95f;
+		[Range(0, 1)] public float wallFriction = 0.9f;
+		public float granularStiffness = 1000f;
+		public float granularDamping = 3f;
+		public float granularFriction = 0.9f;
 
 		[Header("Foam Settings")] public bool foamActive;
 		public int maxFoamParticleCount = 1000;
@@ -41,9 +49,13 @@ namespace Seb.Fluid.Simulation
 		[Header("Volumetric Render Settings")] public bool renderToTex3D;
 		public int densityTextureRes;
 
-		[Header("References")] public ComputeShader compute;
-		public Spawner3D spawner;
+		[Header("Mouse Interaction Settings")] public bool enableMouseInteraction = true;
+		public float mouseInteractionRadius = 1f;
+		public float mouseInteractionStrength = 50f;
+		public Camera mainCamera;
 
+		[Header("References")] public ComputeShader compute;
+		public Spawner3D spawner;		
 		[HideInInspector] public RenderTexture DensityMap;
 		public Vector3 Scale => transform.localScale;
 
@@ -53,6 +65,7 @@ namespace Seb.Fluid.Simulation
 		public ComputeBuffer foamCountBuffer { get; private set; }
 		public ComputeBuffer positionBuffer { get; private set; }
 		public ComputeBuffer velocityBuffer { get; private set; }
+		public ComputeBuffer tempvelocityBuffer { get; private set; }
 		public ComputeBuffer densityBuffer { get; private set; }
 		public ComputeBuffer predictedPositionsBuffer;
 		public ComputeBuffer debugBuffer { get; private set; }
@@ -69,10 +82,12 @@ namespace Seb.Fluid.Simulation
 		const int densityKernel = 4;
 		const int pressureKernel = 5;
 		const int viscosityKernel = 6;
-		const int updatePositionsKernel = 7;
-		const int renderKernel = 8;
-		const int foamUpdateKernel = 9;
-		const int foamReorderCopyBackKernel = 10;
+		const int velocityCopybackKernel = 7;
+		const int granularForcesKernel = 8;
+		const int updatePositionsKernel = 9;
+		const int renderKernel = 10;
+		const int foamUpdateKernel = 11;
+		const int foamReorderCopyBackKernel = 12;
 
 		SpatialHash spatialHash;
 
@@ -85,15 +100,22 @@ namespace Seb.Fluid.Simulation
 		Spawner3D.SpawnData spawnData;
 		Dictionary<ComputeBuffer, string> bufferNameLookup;
 
-		void Start()
-		{
-			Debug.Log("Controls: Space = Play/Pause, Q = SlowMode, R = Reset");
-			isPaused = false;
+		ParticleDisplay3D display;
+		float particleScale;
 
-			Initialize();
+	void Start()
+	{
+		Debug.Log("Controls: Space = Play/Pause, Q = SlowMode, R = Reset");
+		isPaused = false;
+
+		// Get main camera if not assigned
+		if (mainCamera == null)
+		{
+			mainCamera = Camera.main;
 		}
 
-		void Initialize()
+		Initialize();
+	}		void Initialize()
 		{
 			spawnData = spawner.GetSpawnData();
 			int numParticles = spawnData.points.Length;
@@ -104,6 +126,7 @@ namespace Seb.Fluid.Simulation
 			positionBuffer = CreateStructuredBuffer<float3>(numParticles);
 			predictedPositionsBuffer = CreateStructuredBuffer<float3>(numParticles);
 			velocityBuffer = CreateStructuredBuffer<float3>(numParticles);
+			tempvelocityBuffer = CreateStructuredBuffer<float3>(numParticles);
 			densityBuffer = CreateStructuredBuffer<float2>(numParticles);
 			foamBuffer = CreateStructuredBuffer<FoamParticle>(maxFoamParticleCount);
 			foamSortTargetBuffer = CreateStructuredBuffer<FoamParticle>(maxFoamParticleCount);
@@ -119,6 +142,7 @@ namespace Seb.Fluid.Simulation
 				{ positionBuffer, "Positions" },
 				{ predictedPositionsBuffer, "PredictedPositions" },
 				{ velocityBuffer, "Velocities" },
+				{ tempvelocityBuffer, "tempVelocities" },
 				{ densityBuffer, "Densities" },
 				{ spatialHash.SpatialKeys, "SpatialKeys" },
 				{ spatialHash.SpatialOffsets, "SpatialOffsets" },
@@ -207,6 +231,23 @@ namespace Seb.Fluid.Simulation
 				spatialHash.SpatialKeys,
 				spatialHash.SpatialOffsets
 			});
+
+			// Velocity copyback kernel
+			SetBuffers(compute, velocityCopybackKernel, bufferNameLookup, new ComputeBuffer[]
+			{
+				velocityBuffer,
+				tempvelocityBuffer
+			});
+			// Granular forces kernel
+			SetBuffers(compute, granularForcesKernel, bufferNameLookup, new ComputeBuffer[]
+			{
+				predictedPositionsBuffer,
+				velocityBuffer,
+				tempvelocityBuffer,
+				spatialHash.SpatialKeys,
+				spatialHash.SpatialOffsets
+			});
+
 
 			// Update positions kernel
 			SetBuffers(compute, updatePositionsKernel, bufferNameLookup, new ComputeBuffer[]
@@ -330,9 +371,12 @@ namespace Seb.Fluid.Simulation
 			Dispatch(compute, positionBuffer.count, kernelIndex: reorderKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: reorderCopybackKernel);
 
-			Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
-			Dispatch(compute, positionBuffer.count, kernelIndex: pressureKernel);
-			if (viscosityStrength != 0) Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
+			// Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
+			// Dispatch(compute, positionBuffer.count, kernelIndex: pressureKernel);
+			// if (viscosityStrength != 0) Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
+			Dispatch(compute, positionBuffer.count, kernelIndex: velocityCopybackKernel);
+			Dispatch(compute, positionBuffer.count, kernelIndex: granularForcesKernel);
+
 			Dispatch(compute, positionBuffer.count, kernelIndex: updatePositionsKernel);
 		}
 
@@ -350,49 +394,91 @@ namespace Seb.Fluid.Simulation
 			compute.SetFloat("K_SpikyPow3Grad", spikyPow3Grad);
 		}
 
-		void UpdateSettings(float stepDeltaTime, float frameDeltaTime)
+	void UpdateSettings(float stepDeltaTime, float frameDeltaTime)
+	{
+		if (smoothingRadius != smoothRadiusOld)
 		{
-			if (smoothingRadius != smoothRadiusOld)
-			{
-				smoothRadiusOld = smoothingRadius;
-				UpdateSmoothingConstants();
-			}
-
-			Vector3 simBoundsSize = transform.localScale;
-			Vector3 simBoundsCentre = transform.position;
-
-			compute.SetFloat("deltaTime", stepDeltaTime);
-			compute.SetFloat("whiteParticleDeltaTime", frameDeltaTime);
-			compute.SetFloat("simTime", simTimer);
-			compute.SetFloat("gravity", gravity);
-			compute.SetFloat("collisionDamping", collisionDamping);
-			compute.SetFloat("smoothingRadius", smoothingRadius);
-			compute.SetFloat("targetDensity", targetDensity);
-			compute.SetFloat("pressureMultiplier", pressureMultiplier);
-			compute.SetFloat("nearPressureMultiplier", nearPressureMultiplier);
-			compute.SetFloat("viscosityStrength", viscosityStrength);
-			compute.SetVector("boundsSize", simBoundsSize);
-			compute.SetVector("centre", simBoundsCentre);
-
-			compute.SetMatrix("localToWorld", transform.localToWorldMatrix);
-			compute.SetMatrix("worldToLocal", transform.worldToLocalMatrix);
-
-			// Foam settings
-			float fadeInT = (spawnRateFadeInTime <= 0) ? 1 : Mathf.Clamp01((simTimer - spawnRateFadeStartTime) / spawnRateFadeInTime);
-			compute.SetVector("trappedAirParams", new Vector3(trappedAirSpawnRate * fadeInT * fadeInT, trappedAirVelocityMinMax.x, trappedAirVelocityMinMax.y));
-			compute.SetVector("kineticEnergyParams", foamKineticEnergyMinMax);
-			compute.SetFloat("bubbleBuoyancy", bubbleBuoyancy);
-			compute.SetInt("sprayClassifyMaxNeighbours", sprayClassifyMaxNeighbours);
-			compute.SetInt("bubbleClassifyMinNeighbours", bubbleClassifyMinNeighbours);
-			compute.SetFloat("bubbleScaleChangeSpeed", bubbleChangeScaleSpeed);
-			compute.SetFloat("bubbleScale", bubbleScale);
+			smoothRadiusOld = smoothingRadius;
+			UpdateSmoothingConstants();
 		}
 
-		void SetInitialBufferData(Spawner3D.SpawnData spawnData)
+		Vector3 simBoundsSize = transform.localScale;
+		Vector3 simBoundsCentre = transform.position;
+		
+		display = display != null ? display : GetComponent<ParticleDisplay3D>();
+		particleScale = display != null ? display.scale : 0.05f;
+		compute.SetFloat("particleScale", particleScale*2.0f);
+		compute.SetFloat("deltaTime", stepDeltaTime);
+		compute.SetFloat("whiteParticleDeltaTime", frameDeltaTime);
+		compute.SetFloat("simTime", simTimer);
+		compute.SetFloat("gravity", gravity);
+		compute.SetFloat("collisionDamping", collisionDamping);
+		
+		compute.SetFloat("wallFriction", wallFriction);
+		compute.SetFloat("granularStiffness", granularStiffness);
+		compute.SetFloat("granularDamping", granularDamping);
+		compute.SetFloat("granularFriction", granularFriction);
+
+		compute.SetFloat("smoothingRadius", smoothingRadius);
+		compute.SetFloat("targetDensity", targetDensity);
+		compute.SetFloat("pressureMultiplier", pressureMultiplier);
+		compute.SetFloat("nearPressureMultiplier", nearPressureMultiplier);
+		compute.SetFloat("viscosityStrength", viscosityStrength);
+		compute.SetVector("boundsSize", simBoundsSize);
+		compute.SetVector("centre", simBoundsCentre);
+
+		compute.SetMatrix("localToWorld", transform.localToWorldMatrix);
+		compute.SetMatrix("worldToLocal", transform.worldToLocalMatrix);
+
+		// Foam settings
+		float fadeInT = (spawnRateFadeInTime <= 0) ? 1 : Mathf.Clamp01((simTimer - spawnRateFadeStartTime) / spawnRateFadeInTime);
+		compute.SetVector("trappedAirParams", new Vector3(trappedAirSpawnRate * fadeInT * fadeInT, trappedAirVelocityMinMax.x, trappedAirVelocityMinMax.y));
+		compute.SetVector("kineticEnergyParams", foamKineticEnergyMinMax);
+		compute.SetFloat("bubbleBuoyancy", bubbleBuoyancy);
+		compute.SetInt("sprayClassifyMaxNeighbours", sprayClassifyMaxNeighbours);
+		compute.SetInt("bubbleClassifyMinNeighbours", bubbleClassifyMinNeighbours);
+		compute.SetFloat("bubbleScaleChangeSpeed", bubbleChangeScaleSpeed);
+		compute.SetFloat("bubbleScale", bubbleScale);
+
+		// Mouse interaction settings
+		UpdateMouseInteractionSettings();
+	}
+
+	void UpdateMouseInteractionSettings()
+	{
+		if (!enableMouseInteraction || mainCamera == null)
+		{
+			compute.SetFloat("mouseInteractionRadius", 0);
+			compute.SetFloat("mouseInteractionStrength", 0);
+			return;
+		}
+		if(Input.GetMouseButtonDown(1) || Input.GetMouseButton(1)) // 检测右键是否按下
+		{
+			// todo: 优化为鼠标右键按下时计算，视角交互中取消右键的功能
+			Ray ray = mainCamera.ScreenPointToRay(Input.mousePosition);
+			Vector3 rayOrigin = ray.origin;
+			Vector3 rayDirection = ray.direction.normalized;
+			
+			compute.SetVector("mouseRayOrigin", rayOrigin);
+			compute.SetVector("mouseRayDirection", rayDirection);
+			compute.SetFloat("mouseInteractionRadius", mouseInteractionRadius);
+			compute.SetFloat("mouseInteractionStrength", mouseInteractionStrength);
+		}
+		else
+		{
+			compute.SetFloat("mouseInteractionRadius", 0);
+			compute.SetFloat("mouseInteractionStrength", 0);
+		}
+		return;
+		
+	}
+
+	void SetInitialBufferData(Spawner3D.SpawnData spawnData)
 		{
 			positionBuffer.SetData(spawnData.points);
 			predictedPositionsBuffer.SetData(spawnData.points);
 			velocityBuffer.SetData(spawnData.velocities);
+			tempvelocityBuffer.SetData(spawnData.velocities);
 
 			foamBuffer.SetData(new FoamParticle[foamBuffer.count]);
 

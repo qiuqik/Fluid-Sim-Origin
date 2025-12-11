@@ -38,7 +38,6 @@ RenderSettings:
   m_ReflectionIntensity: 1
   m_CustomReflection: {fileID: 0}
   m_Sun: {fileID: 0}
-  m_IndirectSpecularColor: {r: 0.1832577, g: 0.22694919, b: 0.2950355, a: 1}
   m_UseRadianceAmbientProbe: 0
 --- !u!157 &3
 LightmapSettings:
@@ -245,7 +244,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f99a384512b94654fbeb7c06c43f81ba, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  particleSpawnDensity: 600
+  particleSpawnDensity: 800
   initialVel:
     x: 0
     y: 0
@@ -253,14 +252,14 @@ MonoBehaviour:
   jitterStrength: 0.035
   showSpawnBounds: 1
   spawnRegions:
-  - centre: {x: -8.3, y: -1.3, z: 3.65}
-    size: 7
+  - centre: {x: -3.25, y: 0.48, z: 0.79}
+    size: 6
     debugDisplayCol: {r: 1, g: 0.26909092, b: 0.08962262, a: 1}
-  - centre: {x: -8.3, y: -1.3, z: -3.65}
-    size: 7
+  - centre: {x: 3.4, y: -0.64, z: 0.73}
+    size: 0
     debugDisplayCol: {r: 0.09019607, g: 0.3801795, b: 1, a: 1}
-  debug_num_particles: 410758
-  debug_spawn_volume: 686
+  debug_num_particles: 166375
+  debug_spawn_volume: 216
 --- !u!114 &647353484
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -283,7 +282,11 @@ MonoBehaviour:
   pressureMultiplier: 288
   nearPressureMultiplier: 2.16
   viscosityStrength: 0
-  collisionDamping: 0.95
+  collisionDamping: 0.1
+  wallFriction: 0.7
+  granularStiffness: 1000
+  granularDamping: 2
+  granularFriction: 0.9
   foamActive: 0
   maxFoamParticleCount: 1280000
   trappedAirSpawnRate: 70
@@ -298,6 +301,10 @@ MonoBehaviour:
   bubbleChangeScaleSpeed: 7
   renderToTex3D: 0
   densityTextureRes: 1
+  enableMouseInteraction: 1
+  mouseInteractionRadius: 2
+  mouseInteractionStrength: 30
+  mainCamera: {fileID: 881847627}
   compute: {fileID: 7200000, guid: 9443696acfd0ebe4fb503b56d952256c, type: 3}
   spawner: {fileID: 647353483}
   DensityMap: {fileID: 0}
@@ -311,7 +318,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 24, y: 10, z: 15}
+  m_LocalScale: {x: 12.85, y: 7.8, z: 9.96}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -459,7 +466,6 @@ MonoBehaviour:
   scale: 2
   debugParam: 50000
   autoDraw: 1
-  testParams: {x: 1, y: 3, z: 0.6}
   shaderBillboard: {fileID: 4800000, guid: 4a0c3a32a60599c4198fe00e79a88932, type: 3}
   copyCountToArgsCompute: {fileID: 7200000, guid: 315c9eb00260d8743b3ffa9803eadaf3, type: 3}
 --- !u!114 &1294730516
@@ -474,7 +480,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bdfe3008efbf29745879ab1d40574478, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  mode: 2
+  mode: 1
   scale: 4
   colourMap:
     serializedVersion: 2

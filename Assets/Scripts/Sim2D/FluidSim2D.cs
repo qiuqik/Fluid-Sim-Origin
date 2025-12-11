@@ -184,7 +184,7 @@ namespace Seb.Fluid2D.Simulation
 			display = GetComponent<ParticleDisplay2D>();
 			particleScale = display != null ? display.scale : 0.05f;
 
-			compute.SetFloat("particleScale", particleScale*2.0f);
+			compute.SetFloat("particleScale", particleScale*1.5f);
 			compute.SetFloat("deltaTime", deltaTime);
 			compute.SetFloat("gravity", gravity);
 			compute.SetFloat("collisionDamping", collisionDamping);

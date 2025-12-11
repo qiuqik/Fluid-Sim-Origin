@@ -5,6 +5,8 @@
 #pragma kernel CalculateDensities
 #pragma kernel CalculatePressureForce
 #pragma kernel CalculateViscosity
+#pragma kernel VelocityCopyback
+#pragma kernel CalculateGranularForces
 #pragma kernel UpdatePositions
 #pragma kernel UpdateDensityTexture
 #pragma kernel UpdateWhiteParticles
@@ -21,6 +23,7 @@ static const int ThreadGroupSize = 256;
 RWStructuredBuffer<float3> Positions;
 RWStructuredBuffer<float3> PredictedPositions;
 RWStructuredBuffer<float3> Velocities;
+RWStructuredBuffer<float3> tempVelocities; // For granular force calculations
 RWStructuredBuffer<float2> Densities; // Density, Near Density
 
 // Spatial hashing
@@ -32,6 +35,13 @@ RWStructuredBuffer<float3> Debug;
 
 // Settings
 const uint numParticles;
+
+const float particleScale;
+const float granularStiffness;
+const float granularDamping;
+const float granularFriction;
+const float wallFriction;
+
 const float gravity;
 const float deltaTime;
 const float simTime;
@@ -47,6 +57,11 @@ const float3 boundsSize;
 
 const float4x4 localToWorld;
 const float4x4 worldToLocal;
+
+const float3 mouseRayOrigin;
+const float3 mouseRayDirection;
+const float mouseInteractionRadius;
+const float mouseInteractionStrength;
 
 const float2 interactionInputPoint;
 const float interactionInputStrength;
@@ -108,21 +123,31 @@ void ResolveCollisions(inout float3 pos, inout float3 vel, float collisionDampin
     const float3 halfSize = 0.5;
     const float3 edgeDst = halfSize - abs(posLocal);
 
-    // Resolve collisions
+    // Resolve collisions with wall friction
+    // Friction is applied to the tangential velocity (velocity parallel to the wall)
     if (edgeDst.x <= 0)
     {
         posLocal.x = halfSize.x * sign(posLocal.x);
         velocityLocal.x *= -1 * collisionDamping;
+        // Apply friction to tangential velocities (y and z)
+        velocityLocal.y *= (1.0 - wallFriction);
+        velocityLocal.z *= (1.0 - wallFriction);
     }
     if (edgeDst.y <= 0)
     {
         posLocal.y = halfSize.y * sign(posLocal.y);
         velocityLocal.y *= -1 * collisionDamping;
+        // Apply friction to tangential velocities (x and z)
+        velocityLocal.x *= (1.0 - wallFriction);
+        velocityLocal.z *= (1.0 - wallFriction);
     }
     if (edgeDst.z <= 0)
     {
         posLocal.z = halfSize.z * sign(posLocal.z);
         velocityLocal.z *= -1 * collisionDamping;
+        // Apply friction to tangential velocities (x and y)
+        velocityLocal.x *= (1.0 - wallFriction);
+        velocityLocal.y *= (1.0 - wallFriction);
     }
 
     // Transform resolved position/velocity back to world space
@@ -138,6 +163,30 @@ void ExternalForces(uint3 id : SV_DispatchThreadID)
 
     // External forces (gravity)
     Velocities[id.x] += float3(0, gravity, 0) * deltaTime;
+
+    // Mouse interaction - repulsion force
+    if (mouseInteractionRadius > 0 && mouseInteractionStrength > 0)
+    {
+        float3 particlePos = Positions[id.x];
+        float3 directionFromMouse = particlePos - mouseRayOrigin;
+        float dist = length(cross(directionFromMouse, mouseRayDirection));
+        // 对粒子施加垂直于鼠标射线方向的力
+        if (dist > 0.0001 && dist < mouseInteractionRadius)
+        {
+            // 1. 计算垂直于鼠标射线的单位方向（确保力的方向始终垂直于射线）
+            // cross(射线方向, 粒子到射线起点的方向) 得到垂直于射线平面的向量，再叉乘射线方向得到平面内垂直于射线的方向
+            float3 perpendicularDir = normalize(cross(mouseRayDirection, cross(directionFromMouse, mouseRayDirection)));
+            
+            // 2. 动态计算力的大小（距离越近，力越强；距离越远，力越弱，避免突变）
+            float forceIntensity = mouseInteractionStrength * (1.0f - dist / mouseInteractionRadius);
+            
+            // 3. 计算最终受力（可根据需求调整为"吸引"或"排斥"，反转perpendicularDir即可）
+            float3 interactionForce = perpendicularDir * forceIntensity;
+            
+            // 4. 施加力到粒子（假设Forces数组存储每个粒子的受力，需提前定义）
+            Velocities[id.x] += interactionForce * deltaTime;
+        }
+    }
 
     // Predict
     PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * 1 / 120.0;
@@ -456,6 +505,126 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
         }
     }
     Velocities[id.x] += viscosityForce * viscosityStrength * deltaTime;
+}
+
+
+[numthreads(ThreadGroupSize,1,1)]
+void VelocityCopyback (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	tempVelocities[id.x] = Velocities[id.x];
+}
+
+[numthreads(ThreadGroupSize,1,1)]
+void CalculateGranularForces (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+
+	// 获取当前粒子的属性
+	float3 pos = PredictedPositions[id.x];
+	float3 vel = tempVelocities[id.x];
+	
+	int3 originCell = GetCell3D(pos, smoothingRadius);
+	
+	// 优化：沙子只在接触时受力，所以判定半径取 particleScale (直径)
+	// 如果 particleScale 比 smoothingRadius 小很多，用这个平方距离做剔除效率更高
+	float contactRadius = particleScale; 
+	float sqrContactRadius = contactRadius * contactRadius;
+
+	float3 forceAccumulator = float3(0, 0, 0);
+
+	// ---------------------------------------------------------
+	// 邻域搜索
+	// ---------------------------------------------------------
+	for (int i = 0; i < 27; i++)
+	{
+		uint hash = HashCell3D(originCell + offsets3D[i]);
+		uint key = KeyFromHash(hash, numParticles);
+		uint currIndex = SpatialOffsets[key];
+
+		while (currIndex < numParticles)
+		{
+			uint neighbourIndex = currIndex;
+			currIndex++;
+
+			if (neighbourIndex == id.x) continue;
+
+			uint neighbourKey = SpatialKeys[neighbourIndex];
+			if (neighbourKey != key) break;
+
+			float3 neighbourPos = PredictedPositions[neighbourIndex];
+			float3 offset = pos - neighbourPos; // 向量：从邻居指向自己 (Me - Neighbor)
+			float sqrDst = dot(offset, offset);
+
+			// 1. 快速剔除：如果距离超过了接触半径（直径），沙子之间没有力
+			if (sqrDst >= sqrContactRadius || sqrDst == 0) continue;
+
+			float dst = sqrt(sqrDst);
+			float3 normal = offset / dst; // 法线方向：推开自己的方向
+
+			// ---------------------------------------------------------
+			// 核心改造：DEM 颗粒物理计算
+			// ---------------------------------------------------------
+			
+			// 计算重叠量 (Penetration)
+			float overlap = contactRadius - dst;
+
+			if (overlap > 0)
+			{
+				float3 neighbourVel = tempVelocities[neighbourIndex];
+				
+				// 相对速度
+				float3 relVel = vel - neighbourVel;
+				if(length(relVel) < 1e-5) relVel = float3(0, 0, 0); // 避免数值误差导致的震动
+
+				// --- A. 法向力 (Normal Force) - 弹簧阻尼 ---
+				// 它是沿着法线方向的分量
+				float relVelNormal = dot(relVel, normal);
+				
+				// 弹簧力 (推开) - 阻尼力 (吸收能量，防止像弹力球一样乱跳)
+				// granularStiffness 建议设大，granularDamping 建议设大
+				// float springForce = granularStiffness * overlap;
+				float springForce = granularStiffness * pow(overlap, 1.5);
+				float dampingForce = -granularDamping * relVelNormal;
+				
+				// 法向力总和 (必须非负，不能互相吸引)
+				float Fn_mag = max(0.0f, springForce + dampingForce);
+				float3 Fn = Fn_mag * normal;
+
+				// --- B. 切向力 (Friction Force) - 库仑摩擦 ---
+				// 去除法向速度分量，剩下的就是切向滑动速度
+				float3 tanVel = relVel - relVelNormal * normal;
+				float tanSpeed = length(tanVel);
+
+				float3 Ft = float3(0, 0, 0);
+				
+				// 只有在滑动时才计算摩擦
+				if (tanSpeed > 1e-5) // 避免除以0
+				{
+					float3 tanDir = tanVel / tanSpeed;
+
+					// 1. 计算想要完全停止滑动所需的力 (粘滞力)
+					// 这里系数可以用 mass/dt 来估算，或者直接用一个很高的摩擦刚度
+					float frictionForceNeededToStop = tanSpeed * granularStiffness * 0.5; // 0.5是经验系数
+
+					// 2. 库仑定律上限：摩擦力不能超过 (摩擦系数 * 正压力)
+					float maxFriction = granularFriction * Fn_mag;
+
+					// 3. 取两者较小值 (如果挤压力不够大，就止不住滑，表现为流动)
+					float actualFrictionMag = min(frictionForceNeededToStop, maxFriction);
+
+					// 摩擦力方向与滑动方向相反
+					Ft = -actualFrictionMag * tanDir;
+				}
+
+				// 累加力 (因为 offset 是 Me - Neighbor，且 force 是推开 Me，所以直接加)
+				forceAccumulator += Fn + Ft;
+			}
+		}
+	}
+
+	// 应用力到速度 (假设质量为 1)
+	Velocities[id.x] += forceAccumulator * deltaTime;
 }
 
 [numthreads(ThreadGroupSize, 1, 1)]

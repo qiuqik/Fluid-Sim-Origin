@@ -79,17 +79,17 @@ namespace Seb.Fluid.Demo
 
 			//Scroll to zoom
 			float mouseScroll = Input.mouseScrollDelta.y;
-			if (Input.GetMouseButtonDown(1))
-			{
-				rightClickPos = Input.mousePosition;
-			}
+			// if (Input.GetMouseButtonDown(1))
+			// {
+			// 	rightClickPos = Input.mousePosition;
+			// }
 
-			if (Input.GetMouseButton(1))
-			{
-				Vector2 delta = (Vector2)Input.mousePosition - rightClickPos;
-				rightClickPos = Input.mousePosition;
-				mouseScroll = delta.magnitude * Mathf.Sign(Mathf.Abs(delta.x) > Mathf.Abs(delta.y) ? delta.x : -delta.y) / Screen.width * zoomSpeed * 100;
-			}
+			// if (Input.GetMouseButton(1))
+			// {
+			// 	Vector2 delta = (Vector2)Input.mousePosition - rightClickPos;
+			// 	rightClickPos = Input.mousePosition;
+			// 	mouseScroll = delta.magnitude * Mathf.Sign(Mathf.Abs(delta.x) > Mathf.Abs(delta.y) ? delta.x : -delta.y) / Screen.width * zoomSpeed * 100;
+			// }
 
 			transform.Translate(Vector3.forward * mouseScroll * zoomSpeed * dstWeight);
 		}
